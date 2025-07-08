@@ -1,0 +1,26 @@
+{
+    "model_path": "yolo/yoloaimonnx/onnxmd/10w320v5.onnx",
+    "conf_threshold": 0.4,
+    "nms_threshold": 0.4,
+    "input_size": [640, 640],
+    "screen_crop_size": [1920, 1080],
+    "providers": ["ROCMExecutionProvider"],
+    "names": {
+        "0": "t_body",
+        "1": "t_head", 
+        "2": "ct_body",
+        "3": "ct_head"
+    },
+    "mouse_movement": {
+        "jindu": 1000,
+        "noise_level": 0.58,
+        "speed": 0.00001,
+        "show_trajectory": false
+    },
+    "logging": {
+        "level": "INFO",
+        "file": "app.log",
+        "max_size": "10MB",
+        "backup_count": 5
+    }
+}
