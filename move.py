@@ -49,7 +49,7 @@ class MouseMovementSimulator:
     
     def _generate_random_control_points(self, P0: np.ndarray, P3: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
-        生成贝塞尔曲线的随机控制点
+        生成贝塞尔曲线的随机控制点，模拟人类鼠标移动特征
         
         Args:
             P0: 起点坐标
@@ -59,21 +59,44 @@ class MouseMovementSimulator:
             Tuple[np.ndarray, np.ndarray]: 控制点P1和P2
         """
         try:
+            # 计算距离和方向
+            distance = np.linalg.norm(P3 - P0)
+            direction = (P3 - P0) / distance if distance > 0 else np.array([0, 0])
+            
+            # 根据距离调整控制点生成策略
+            if distance < 50:
+                # 短距离：更直接的路径
+                curve_factor = 0.1
+            elif distance < 200:
+                # 中等距离：适中的曲线
+                curve_factor = 0.2
+            else:
+                # 长距离：更自然的曲线
+                curve_factor = 0.3
+            
+            # 生成垂直于移动方向的偏移
+            perpendicular = np.array([-direction[1], direction[0]])
+            
+            # 添加随机性，模拟人类手部抖动
+            random_offset = np.random.normal(0, distance * 0.05, 2)
+            
+            # 生成控制点
+            mid_point = (P0 + P3) / 2
+            curve_offset = perpendicular * distance * curve_factor * np.random.uniform(-1, 1)
+            
+            P1 = mid_point + curve_offset + random_offset * 0.3
+            P2 = mid_point - curve_offset + random_offset * 0.7
+            
+            # 确保控制点在合理范围内
             x_min, x_max = min(P0[0], P3[0]), max(P0[0], P3[0])
             y_min, y_max = min(P0[1], P3[1]), max(P0[1], P3[1])
             
-            # 添加一些随机偏移以避免直线
-            offset_x = (x_max - x_min) * 0.1
-            offset_y = (y_max - y_min) * 0.1
-            
-            P1 = np.array([
-                np.random.uniform(x_min - offset_x, x_max + offset_x),
-                np.random.uniform(y_min - offset_y, y_max + offset_y)
-            ])
-            P2 = np.array([
-                np.random.uniform(x_min - offset_x, x_max + offset_x),
-                np.random.uniform(y_min - offset_y, y_max + offset_y)
-            ])
+            # 限制控制点范围，避免过度弯曲
+            margin = distance * 0.2
+            P1[0] = np.clip(P1[0], x_min - margin, x_max + margin)
+            P1[1] = np.clip(P1[1], y_min - margin, y_max + margin)
+            P2[0] = np.clip(P2[0], x_min - margin, x_max + margin)
+            P2[1] = np.clip(P2[1], y_min - margin, y_max + margin)
             
             return P1, P2
         except Exception as e:
@@ -103,7 +126,7 @@ class MouseMovementSimulator:
     
     def _add_noise(self, points: np.ndarray, noise_level: float) -> np.ndarray:
         """
-        为轨迹点添加噪声
+        为轨迹点添加噪声，模拟人类手部抖动和鼠标移动特征
         
         Args:
             points: 原始轨迹点
@@ -116,11 +139,44 @@ class MouseMovementSimulator:
             if noise_level <= 0:
                 return points
             
-            noise = np.random.normal(0, noise_level, points.shape)
-            noisy_points = points + noise
+            # 计算点之间的距离
+            distances = np.linalg.norm(np.diff(points, axis=0), axis=1)
+            avg_distance = np.mean(distances) if len(distances) > 0 else 1
+            
+            # 根据距离调整噪声水平
+            adaptive_noise = noise_level * (avg_distance / 10)  # 距离越大，噪声越大
+            
+            # 生成基础噪声
+            base_noise = np.random.normal(0, adaptive_noise, points.shape)
+            
+            # 添加低频抖动（模拟手部抖动）
+            low_freq_noise = np.zeros_like(points)
+            for i in range(points.shape[1]):  # 对x和y分别处理
+                # 生成低频噪声
+                freq = np.random.uniform(0.1, 0.5)
+                phase = np.random.uniform(0, 2 * np.pi)
+                t = np.linspace(0, 2 * np.pi, points.shape[0])
+                low_freq_noise[:, i] = np.sin(freq * t + phase) * adaptive_noise * 0.3
+            
+            # 添加高频抖动（模拟鼠标传感器噪声）
+            high_freq_noise = np.random.normal(0, adaptive_noise * 0.1, points.shape)
+            
+            # 组合噪声
+            total_noise = base_noise + low_freq_noise + high_freq_noise
+            
+            # 应用噪声
+            noisy_points = points + total_noise
             
             # 确保噪声不会使坐标变为负数
             noisy_points = np.maximum(noisy_points, 0)
+            
+            # 平滑处理，减少过度抖动
+            if len(noisy_points) > 3:
+                # 使用简单的移动平均平滑
+                smoothed_points = noisy_points.copy()
+                for i in range(1, len(noisy_points) - 1):
+                    smoothed_points[i] = (noisy_points[i-1] + noisy_points[i] + noisy_points[i+1]) / 3
+                return smoothed_points
             
             return noisy_points
         except Exception as e:
@@ -161,7 +217,7 @@ class MouseMovementSimulator:
                          jindu: Optional[int] = None,
                          noise_level: Optional[float] = None, 
                          speed: Optional[float] = None, 
-                         show_image: Optional[bool] = None) -> bool:
+                         show_image: Optional[bool] = None) -> Tuple[bool, List[Tuple[float, float]]]:
         """
         模拟鼠标平滑移动
         
@@ -173,7 +229,7 @@ class MouseMovementSimulator:
             show_image: 是否显示轨迹图
             
         Returns:
-            bool: 移动是否成功
+            Tuple[bool, List[Tuple[float, float]]]: (移动是否成功, 轨迹数据)
         """
         try:
             # 使用默认参数或传入的参数
@@ -185,19 +241,19 @@ class MouseMovementSimulator:
             # 参数验证
             if not self._validate_point(end_point):
                 logger.error(f"无效的终点坐标: {end_point}")
-                return False
+                return False, []
             
             if jindu <= 0:
                 logger.error(f"无效的轨迹点数量: {jindu}")
-                return False
+                return False, []
             
             if noise_level < 0:
                 logger.error(f"无效的噪声水平: {noise_level}")
-                return False
+                return False, []
             
             if speed <= 0:
                 logger.error(f"无效的移动速度: {speed}")
-                return False
+                return False, []
             
             # 获取起点和终点
             P0 = np.array(self.mouse.position)
@@ -206,7 +262,7 @@ class MouseMovementSimulator:
             # 检查起点和终点是否相同
             if np.allclose(P0, P3, atol=1):
                 logger.info("起点和终点相同，无需移动")
-                return True
+                return True, [(P0[0], P0[1])]
             
             # 生成控制点
             P1, P2 = self._generate_random_control_points(P0, P3)
@@ -245,15 +301,15 @@ class MouseMovementSimulator:
                 if show_image:
                     self._plot_trajectory(trajectory)
                 
-                return True
+                return True, trajectory
                 
             except Exception as e:
                 logger.error(f"鼠标移动过程中出错: {e}")
-                return False
+                return False, []
                 
         except Exception as e:
             logger.error(f"模拟鼠标移动失败: {e}")
-            return False
+            return False, []
     
     def move_to_point(self, point: Tuple[int, int]) -> bool:
         """
@@ -301,7 +357,8 @@ def simulate_mouse_movement(end_point: Tuple[int, int],
     """
     try:
         simulator = MouseMovementSimulator(mouse)
-        return simulator.simulate_movement(end_point, jindu, noise_level, speed, show_image)
+        success, _ = simulator.simulate_movement(end_point, jindu, noise_level, speed, show_image)
+        return success
     except Exception as e:
         logger.error(f"鼠标移动失败: {e}")
         return False
