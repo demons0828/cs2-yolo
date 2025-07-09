@@ -392,8 +392,27 @@ class GameAssistant:
 def main():
     """主函数"""
     try:
-        assistant = GameAssistant()
-        assistant.run()
+        # 检查是否以GUI模式启动
+        if len(sys.argv) > 1 and sys.argv[1] == "--no-gui":
+            # 命令行模式
+            assistant = GameAssistant()
+            assistant.run()
+        else:
+            # GUI模式（默认）
+            try:
+                import tkinter as tk
+                from main_gui import main as gui_main
+                gui_main()
+            except ImportError as e:
+                logger.warning(f"GUI依赖缺失，切换到命令行模式: {e}")
+                print("GUI依赖缺失，启动命令行模式...")
+                print("快捷键说明:")
+                print("  E - 瞄准最近目标")
+                print("  Q - 退出程序")
+                print("  O - 切换T/CT模式")
+                print("  I - 切换图像显示")
+                assistant = GameAssistant()
+                assistant.run()
     except Exception as e:
         logger.error(f"程序启动失败: {e}")
         sys.exit(1)
