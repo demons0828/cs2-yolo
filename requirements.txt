@@ -1,3 +1,4 @@
+# 核心依赖
 onnxruntime>=1.20.0
 pyautogui>=0.9.54
 numpy>=1.24.0
@@ -6,3 +7,27 @@ Pillow>=10.0.0
 pynput>=1.7.6
 matplotlib>=3.7.0
 typing-extensions>=4.7.0
+
+# 性能监控
+psutil>=5.9.0
+
+# GUI相关
+tkinter  # 通常内置于Python
+
+# AMD GPU支持 (可选，需要ROCm环境)
+# onnxruntime-rocm>=1.20.0  # 替代onnxruntime，如果使用AMD GPU
+
+# NVIDIA GPU支持 (可选，需要CUDA环境)
+# onnxruntime-gpu>=1.20.0  # 替代onnxruntime，如果使用NVIDIA GPU
+
+# Intel GPU支持 (可选)
+# openvino>=2023.0.0
+
+# TensorRT支持 (可选，需要TensorRT环境)
+# tensorrt>=8.0.0
+
+# Windows GPU检测 (可选，仅Windows系统)
+# WMI>=1.5.1
+
+# 模型创建和验证 (可选，用于设备验证)
+# onnx>=1.14.0

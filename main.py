@@ -7,6 +7,8 @@ import pyautogui
 import pynput.keyboard as keyboard
 from pynput.mouse import Controller
 from move import simulate_mouse_movement
+from device_manager import get_device_manager
+from performance_monitor import get_performance_monitor
 import os
 import sys
 import logging
@@ -28,14 +30,19 @@ class Config:
     """配置管理类"""
     def __init__(self, config_file: str = "config.json"):
         self.config_file = config_file
+        self.device_manager = get_device_manager()
         self.default_config = {
-            "model_path": "yolo/yoloaimonnx/onnxmd/10w320v5.onnx",
+            "model_path": "onnxmd/10w320v5.onnx",
             "conf_threshold": 0.4,
             "nms_threshold": 0.4,
             "input_size": [640, 640],
             "screen_crop_size": [1920, 1080],
-            "providers": ["ROCMExecutionProvider"],
-            "names": {0: 't_body', 1: 't_head', 2: 'ct_body', 3: 'ct_head'}
+            "providers": [self.device_manager.recommended_provider],
+            "provider_options": [self.device_manager.get_provider_config(self.device_manager.recommended_provider)],
+            "names": {0: 't_body', 1: 't_head', 2: 'ct_body', 3: 'ct_head'},
+            "inference_mode": "auto",  # auto, cpu, gpu, best_performance
+            "auto_optimize": True,
+            "performance_monitoring": True
         }
         self.config = self.load_config()
     
@@ -62,6 +69,61 @@ class Config:
                 json.dump(config, f, indent=4, ensure_ascii=False)
         except Exception as e:
             logger.error(f"保存配置文件失败: {e}")
+    
+    def update_inference_mode(self, mode: str) -> None:
+        """更新推理模式"""
+        try:
+            if mode == "auto":
+                self.config["providers"] = [self.device_manager.recommended_provider]
+                self.config["provider_options"] = [self.device_manager.get_provider_config(self.device_manager.recommended_provider)]
+            elif mode == "cpu":
+                self.config["providers"] = ["CPUExecutionProvider"]
+                self.config["provider_options"] = [self.device_manager.get_provider_config("CPUExecutionProvider")]
+            elif mode == "gpu":
+                # 选择最佳的GPU提供者
+                gpu_providers = [p for p in self.device_manager.available_providers 
+                               if p != "CPUExecutionProvider"]
+                if gpu_providers:
+                    best_gpu = gpu_providers[0]  # 已按优先级排序
+                    self.config["providers"] = [best_gpu]
+                    self.config["provider_options"] = [self.device_manager.get_provider_config(best_gpu)]
+                else:
+                    logger.warning("未找到GPU提供者，回退到CPU")
+                    self.config["providers"] = ["CPUExecutionProvider"]
+                    self.config["provider_options"] = [self.device_manager.get_provider_config("CPUExecutionProvider")]
+            elif mode == "best_performance":
+                # 使用性能最佳的提供者
+                self.config["providers"] = [self.device_manager.recommended_provider]
+                self.config["provider_options"] = [self.device_manager.get_provider_config(self.device_manager.recommended_provider)]
+            
+            self.config["inference_mode"] = mode
+            self.save_config(self.config)
+            logger.info(f"推理模式已更新为: {mode}, 使用提供者: {self.config['providers']}")
+            
+        except Exception as e:
+            logger.error(f"更新推理模式失败: {e}")
+    
+    def set_custom_provider(self, provider: str) -> bool:
+        """设置自定义推理提供者"""
+        try:
+            if provider in self.device_manager.available_providers:
+                is_valid, message = self.device_manager.validate_provider(provider)
+                if is_valid:
+                    self.config["providers"] = [provider]
+                    self.config["provider_options"] = [self.device_manager.get_provider_config(provider)]
+                    self.config["inference_mode"] = "custom"
+                    self.save_config(self.config)
+                    logger.info(f"推理提供者已设置为: {provider}")
+                    return True
+                else:
+                    logger.error(f"提供者验证失败: {message}")
+                    return False
+            else:
+                logger.error(f"提供者 {provider} 不可用")
+                return False
+        except Exception as e:
+            logger.error(f"设置推理提供者失败: {e}")
+            return False
 
 class YOLODetector:
     """YOLO检测器类"""
@@ -69,6 +131,9 @@ class YOLODetector:
         self.config = config
         self.ort_session = None
         self.input_tag = 'input'
+        self.performance_monitor = get_performance_monitor()
+        self.provider_name = "unknown"
+        self.model_name = os.path.basename(config.config.get("model_path", "default"))
         self.initialize_model()
     
     def initialize_model(self) -> None:
@@ -79,11 +144,68 @@ class YOLODetector:
                 raise FileNotFoundError(f"模型文件不存在: {model_path}")
             
             providers = self.config.config["providers"]
-            self.ort_session = ort.InferenceSession(model_path, providers=providers)
-            logger.info(f"模型加载成功: {model_path}")
+            provider_options = self.config.config.get("provider_options", [{}])
+            
+            # 确保provider_options长度与providers匹配
+            if len(provider_options) < len(providers):
+                provider_options.extend([{}] * (len(providers) - len(provider_options)))
+            
+            logger.info(f"初始化模型: {model_path}")
+            logger.info(f"使用提供者: {providers}")
+            logger.info(f"提供者选项: {provider_options}")
+            
+            self.ort_session = ort.InferenceSession(
+                model_path, 
+                providers=providers,
+                provider_options=provider_options
+            )
+            
+            # 获取实际使用的提供者
+            actual_providers = self.ort_session.get_providers()
+            logger.info(f"实际使用的提供者: {actual_providers}")
+            
+            # 更新提供者名称
+            if actual_providers:
+                self.provider_name = actual_providers[0]
+            
+            # 记录性能信息
+            if self.config.config.get("performance_monitoring", False):
+                self._log_performance_info()
+                
         except Exception as e:
             logger.error(f"模型初始化失败: {e}")
-            raise
+            # 尝试回退到CPU
+            try:
+                logger.warning("尝试回退到CPU执行")
+                self.ort_session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+                logger.info("成功回退到CPU执行")
+            except Exception as cpu_error:
+                logger.error(f"CPU回退也失败: {cpu_error}")
+                raise
+    
+    def _log_performance_info(self) -> None:
+        """记录性能相关信息"""
+        try:
+            session_options = self.ort_session.get_session_options()
+            providers = self.ort_session.get_providers()
+            
+            logger.info("=== 性能配置信息 ===")
+            logger.info(f"执行提供者: {providers}")
+            logger.info(f"线程数: {session_options.intra_op_num_threads}")
+            logger.info(f"并行线程数: {session_options.inter_op_num_threads}")
+            
+            # 输入输出信息
+            inputs = self.ort_session.get_inputs()
+            outputs = self.ort_session.get_outputs()
+            
+            logger.info("=== 模型信息 ===")
+            for inp in inputs:
+                logger.info(f"输入: {inp.name}, 形状: {inp.shape}, 类型: {inp.type}")
+            for out in outputs:
+                logger.info(f"输出: {out.name}, 形状: {out.shape}, 类型: {out.type}")
+                
+        except Exception as e:
+            logger.debug(f"记录性能信息失败: {e}")
     
     def preprocess(self, image: Image.Image) -> np.ndarray:
         """图像预处理"""
@@ -138,9 +260,23 @@ class YOLODetector:
     def detect(self, image: Image.Image) -> Tuple[List, List, List]:
         """执行检测"""
         try:
+            # 开始性能监控
+            if self.config.config.get("performance_monitoring", False):
+                self.performance_monitor.start_inference("detection")
+            
             input_image = self.preprocess(image)
             outputs = self.ort_session.run(None, {self.input_tag: input_image})
-            return self.postprocess(outputs)
+            result = self.postprocess(outputs)
+            
+            # 结束性能监控
+            if self.config.config.get("performance_monitoring", False):
+                self.performance_monitor.end_inference(
+                    "detection", 
+                    self.provider_name, 
+                    self.model_name
+                )
+            
+            return result
         except Exception as e:
             logger.error(f"检测失败: {e}")
             return [], [], []
