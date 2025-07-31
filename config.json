@@ -1,16 +1,27 @@
 {
-    "model_path": "yolo/yoloaimonnx/onnxmd/10w320v5.onnx",
+    "model_path": "onnxmd/10w320v5.onnx",
     "conf_threshold": 0.4,
     "nms_threshold": 0.4,
     "input_size": [640, 640],
     "screen_crop_size": [1920, 1080],
     "providers": ["ROCMExecutionProvider"],
+    "provider_options": [
+        {
+            "device_id": 0,
+            "arena_extend_strategy": "kSameAsRequested",
+            "gpu_mem_limit": 2147483648,
+            "enable_hip_graph": true
+        }
+    ],
     "names": {
         "0": "t_body",
         "1": "t_head", 
         "2": "ct_body",
         "3": "ct_head"
     },
+    "inference_mode": "auto",
+    "auto_optimize": true,
+    "performance_monitoring": true,
     "mouse_movement": {
         "jindu": 1000,
         "noise_level": 0.58,
